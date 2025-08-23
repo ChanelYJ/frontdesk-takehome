@@ -20,7 +20,11 @@ The Salon AI Agent can:
   - Location and contact information
   - Staff information
   - Specialties and offerings
-- **Trigger "request help" events** when it doesn't know the answer
+- **Intelligent help request system** with database storage and supervisor notifications
+- **Priority-based request handling** (Low, Medium, High, Urgent)
+- **Smart supervisor assignment** based on expertise and availability
+- **Real-time supervisor notifications** via simulated SMS and webhooks
+- **Tag-based categorization** for better request organization
 - **Handle multiple participants** in a LiveKit room
 - **Log all interactions** for monitoring and debugging
 
@@ -87,13 +91,19 @@ The Salon AI Agent can:
 ```
 frontdesk-takehome/
 ├── src/
-│   ├── main.py              # Main application entry point
-│   ├── salon_agent.py       # Core AI agent logic
-│   ├── token_generator.py   # LiveKit token utilities
-│   └── test_client.py       # Test client for demonstrations
-├── requirements.txt          # Python dependencies
-├── env.example              # Environment variables template
-└── README.md                # This file
+│   ├── main.py                  # Main application entry point
+│   ├── salon_agent.py           # Core AI agent logic
+│   ├── help_request_db.py       # Database management for help requests
+│   ├── supervisor_notifier.py   # Supervisor notification system
+│   ├── supervisor_dashboard.py  # CLI dashboard for supervisors
+│   ├── token_generator.py       # LiveKit token utilities
+│   ├── test_client.py           # Test client for demonstrations
+│   └── demo.py                  # Offline demonstration script
+├── setup.py                     # Easy setup script
+├── requirements.txt              # Python dependencies
+├── env.example                  # Environment variables template
+├── .gitignore                   # Git ignore rules
+└── README.md                    # This file
 ```
 
 ## 🔧 How It Works
@@ -120,15 +130,39 @@ The agent has built-in knowledge about:
 
 ## 🧪 Testing
 
-The `test_client.py` script simulates customer interactions to test the agent's capabilities:
+### Demo Script
+The `demo.py` script demonstrates the agent's capabilities without requiring LiveKit:
+
+```bash
+python3 src/demo.py
+```
+
+### Test Client
+The `test_client.py` script simulates customer interactions with LiveKit:
+
+```bash
+python3 src/test_client.py
+```
+
+### Supervisor Dashboard
+The `supervisor_dashboard.py` script provides a CLI interface for supervisors:
+
+```bash
+python3 src/supervisor_dashboard.py
+```
+
+### Test Questions
+The system handles various question types:
 
 ```python
 test_questions = [
-    "What are your business hours?",
-    "How much does a haircut cost?",
-    "Where are you located?",
-    "What's the weather like today?",  # Triggers help request
-    "Can you recommend a restaurant nearby?"  # Triggers help request
+    "What are your business hours?",           # ✅ Business knowledge
+    "How much does a haircut cost?",           # ✅ Service pricing
+    "Where are you located?",                  # ✅ Location info
+    "What's the weather like today?",          # 🚨 Help request (low priority)
+    "Can you recommend a restaurant nearby?",  # 🚨 Help request (low priority)
+    "I have an urgent hair emergency!",        # 🚨 Help request (high priority)
+    "Do you have parking?"                     # 🚨 Help request (low priority)
 ]
 ```
 
@@ -154,14 +188,28 @@ test_questions = [
 
 When the agent encounters an unknown question:
 
-1. **Logs the request** with timestamp and participant info
-2. **Sends a message** to the customer about requesting help
-3. **Stores the request** for human staff review
-4. **In a production system**, this could:
-   - Create help desk tickets
-   - Notify human staff
-   - Forward to supervisors
-   - Integrate with CRM systems
+1. **Tells the caller**: "Let me check with my supervisor and get back to you."
+2. **Creates a pending help request** in the SQLite database with:
+   - Customer information and question
+   - Priority level (auto-detected from content)
+   - Relevant tags for categorization
+   - Timestamp and metadata
+3. **Automatically assigns a supervisor** based on:
+   - Question content and expertise match
+   - Current availability
+   - Priority level (urgent requests go to owner)
+4. **Simulates texting the supervisor** with:
+   - "Hey [Name], I need help answering [question]"
+   - Customer details and priority level
+   - Request ID for tracking
+5. **Triggers webhooks** to external systems (Slack, Teams, Discord, custom APIs)
+6. **Provides supervisor dashboard** for managing and resolving requests
+
+### Database Schema
+- **SQLite database** (`help_requests.db`) for lightweight, fast storage
+- **Structured data** with status tracking, priority levels, and metadata
+- **Easy migration** to DynamoDB/Firebase for production use
+- **Performance indexes** for fast querying and reporting
 
 ## 🔧 Customization
 
@@ -237,11 +285,16 @@ This project is for educational and evaluation purposes. LiveKit is licensed und
 
 This project successfully demonstrates:
 - ✅ Research and implementation of LiveKit Python SDK
-- ✅ Creation of a functional AI agent
+- ✅ Creation of a functional AI agent with business knowledge
 - ✅ Effective prompt engineering for business scenarios
-- ✅ Implementation of help request system
+- ✅ **Elegant help request system** with database storage
+- ✅ **Priority-based request handling** with smart supervisor assignment
+- ✅ **Real-time supervisor notifications** via SMS simulation and webhooks
+- ✅ **Tag-based categorization** for better request organization
+- ✅ **SQLite database design** ready for production scaling
+- ✅ **Supervisor dashboard** for request management
 - ✅ Clean, documented, and maintainable code
 - ✅ Proper error handling and logging
 - ✅ Asynchronous programming with asyncio
 - ✅ Environment-based configuration
-- ✅ Testing and demonstration capabilities
+- ✅ Comprehensive testing and demonstration capabilities

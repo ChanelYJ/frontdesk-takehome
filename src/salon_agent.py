@@ -5,6 +5,8 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 from livekit import rtc, api
+from help_request_db import help_request_db, HelpRequestPriority
+from supervisor_notifier import supervisor_notifier
 
 # Load environment variables
 load_dotenv()
@@ -20,7 +22,6 @@ class SalonAgent:
     def __init__(self):
         self.room = rtc.Room()
         self.salon_info = self._load_salon_business_info()
-        self.help_requests = []
         
         # Set up event handlers
         self._setup_event_handlers()
@@ -77,7 +78,8 @@ class SalonAgent:
             try:
                 message = payload.decode('utf-8')
                 logging.info(f"Received message from {participant.identity}: {message}")
-                self._handle_message(message, participant)
+                # Handle message asynchronously
+                asyncio.create_task(self._handle_message(message, participant))
             except Exception as e:
                 logging.error(f"Error processing message: {e}")
         
@@ -90,7 +92,7 @@ class SalonAgent:
         welcome_message = f"Welcome to {self.salon_info['business_name']}! I'm your AI assistant. How can I help you today?"
         self._send_message(welcome_message, participant)
     
-    def _handle_message(self, message: str, participant: rtc.RemoteParticipant):
+    async def _handle_message(self, message: str, participant: rtc.RemoteParticipant):
         """Process incoming messages and generate responses"""
         message_lower = message.lower()
         
@@ -101,7 +103,7 @@ class SalonAgent:
             self._send_message(response, participant)
         else:
             # Trigger "request help" event
-            self._trigger_help_request(message, participant)
+            await self._trigger_help_request(message, participant)
     
     def _generate_response(self, message: str) -> Optional[str]:
         """Generate a response based on the message content"""
@@ -141,29 +143,79 @@ class SalonAgent:
         # No answer found
         return None
     
-    def _trigger_help_request(self, message: str, participant: rtc.RemoteParticipant):
+    async def _trigger_help_request(self, message: str, participant: rtc.RemoteParticipant):
         """Trigger a help request when the agent doesn't know the answer"""
-        help_request = {
-            "timestamp": asyncio.get_event_loop().time(),
-            "participant_id": participant.identity,
-            "message": message,
-            "type": "unknown_question"
-        }
+        try:
+            # Create help request in database
+            help_request = help_request_db.create_help_request(
+                customer_id=participant.identity,
+                customer_name=participant.name or participant.identity,
+                question=message,
+                priority=self._determine_priority(message),
+                tags=self._extract_tags(message),
+                metadata={
+                    "room_name": self.room.name if self.room.name else "unknown",
+                    "participant_identity": participant.identity,
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+            )
+            
+            # Send message to participant
+            help_message = "Let me check with my supervisor and get back to you."
+            self._send_message(help_message, participant)
+            
+            # Notify supervisor
+            await supervisor_notifier.notify_supervisor(help_request)
+            
+            logging.info(f"Help request {help_request.id} created and supervisor notified")
+            
+        except Exception as e:
+            logging.error(f"Failed to create help request: {e}")
+            # Fallback message
+            fallback_message = "I'm sorry, I don't have information about that. Please call us directly for assistance."
+            self._send_message(fallback_message, participant)
+    
+    def _determine_priority(self, message: str) -> HelpRequestPriority:
+        """Determine priority level based on message content"""
+        message_lower = message.lower()
         
-        self.help_requests.append(help_request)
+        # High priority keywords
+        if any(word in message_lower for word in ["urgent", "emergency", "broken", "problem", "issue", "complaint"]):
+            return HelpRequestPriority.HIGH
         
-        # Send message to participant
-        help_message = "I'm sorry, I don't have information about that. I've requested help from a human staff member who will assist you shortly."
-        self._send_message(help_message, participant)
+        # Medium priority keywords  
+        if any(word in message_lower for word in ["appointment", "booking", "reservation", "schedule", "time"]):
+            return HelpRequestPriority.MEDIUM
         
-        # Log the help request
-        logging.info(f"Help request triggered: {help_request}")
+        # Default to low priority
+        return HelpRequestPriority.LOW
+    
+    def _extract_tags(self, message: str) -> list:
+        """Extract relevant tags from the message"""
+        message_lower = message.lower()
+        tags = []
         
-        # In a real implementation, you might:
-        # - Send to a help desk system
-        # - Notify human staff
-        # - Create a ticket
-        # - Forward to a supervisor
+        # Service-related tags
+        if any(word in message_lower for word in ["hair", "cut", "style"]):
+            tags.append("hair")
+        if any(word in message_lower for word in ["color", "dye", "highlight"]):
+            tags.append("color")
+        if any(word in message_lower for word in ["nail", "manicure", "pedicure"]):
+            tags.append("nails")
+        if any(word in message_lower for word in ["facial", "massage", "spa"]):
+            tags.append("spa")
+        if any(word in message_lower for word in ["bridal", "wedding", "special"]):
+            tags.append("bridal")
+        
+        # General tags
+        if any(word in message_lower for word in ["price", "cost", "how much"]):
+            tags.append("pricing")
+        if any(word in message_lower for word in ["hours", "open", "close"]):
+            tags.append("hours")
+        if any(word in message_lower for word in ["location", "address", "directions"]):
+            tags.append("location")
+        
+        return tags
     
     def _send_message(self, message: str, participant: rtc.RemoteParticipant):
         """Send a message to a specific participant"""
@@ -192,9 +244,9 @@ class SalonAgent:
             logging.error(f"Error disconnecting: {e}")
     
     def get_help_requests(self) -> list:
-        """Get list of help requests"""
-        return self.help_requests.copy()
+        """Get list of help requests from database"""
+        return help_request_db.get_pending_requests()
     
-    def clear_help_requests(self):
-        """Clear help requests (for testing)"""
-        self.help_requests.clear() 
+    def get_help_request_stats(self) -> dict:
+        """Get help request statistics"""
+        return help_request_db.get_statistics() 
