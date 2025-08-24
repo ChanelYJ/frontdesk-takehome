@@ -58,6 +58,8 @@ class TestClient:
         try:
             await self.room.connect(url, token)
             logger.info(f"Connected to room: {self.room.name}")
+            # Set connected flag after successful connection
+            self.connected = True
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
             raise
@@ -66,6 +68,7 @@ class TestClient:
         """Disconnect from LiveKit room"""
         if self.connected:
             await self.room.disconnect()
+            self.connected = False
             logger.info("Disconnected from room")
     
     async def send_message(self, message: str):
@@ -85,6 +88,11 @@ class TestClient:
         """Run a test scenario with predefined questions"""
         logger.info("Starting test scenario...")
         
+        # Double-check connection before starting
+        if not self.connected:
+            logger.error("Cannot run test scenario - not connected to room")
+            return
+            
         for i, question in enumerate(questions, 1):
             logger.info(f"\n--- Test Question {i} ---")
             logger.info(f"Customer asks: {question}")

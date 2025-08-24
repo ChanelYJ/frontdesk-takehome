@@ -21,17 +21,15 @@ def generate_agent_token(identity: str = None, name: str = None, room: str = Non
     name = name or os.getenv("AGENT_NAME", "Salon Assistant")
     room = room or os.getenv("ROOM_NAME", "salon-support")
     
-    # Create access token with video grants
+    # Create access token with basic grants
     token = api.AccessToken() \
         .with_identity(identity) \
         .with_name(name) \
         .with_grants(api.VideoGrants(
             room_join=True,
             room=room,
-            room_publish=True,
-            room_subscribe=True,
-            can_publish_data=True,
-            can_subscribe_data=True
+            can_publish=True,
+            can_subscribe=True
         ))
     
     return token.to_jwt()
@@ -50,17 +48,15 @@ def generate_participant_token(identity: str, name: str, room: str = None) -> st
     """
     room = room or os.getenv("ROOM_NAME", "salon-support")
     
-    # Create access token with video grants
+    # Create access token with basic grants
     token = api.AccessToken() \
         .with_identity(identity) \
         .with_name(name) \
         .with_grants(api.VideoGrants(
             room_join=True,
             room=room,
-            room_publish=True,
-            room_subscribe=True,
-            can_publish_data=True,
-            can_subscribe_data=True
+            can_publish=True,
+            can_subscribe=True
         ))
     
     return token.to_jwt()
