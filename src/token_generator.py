@@ -21,8 +21,15 @@ def generate_agent_token(identity: str = None, name: str = None, room: str = Non
     name = name or os.getenv("AGENT_NAME", "Salon Assistant")
     room = room or os.getenv("ROOM_NAME", "salon-support")
     
-    # Create access token with basic grants
-    token = api.AccessToken() \
+    # Get API credentials from environment
+    api_key = os.getenv("LIVEKIT_API_KEY")
+    api_secret = os.getenv("LIVEKIT_API_SECRET")
+    
+    if not api_key or not api_secret:
+        raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET environment variables are required")
+    
+    # Create access token with API credentials
+    token = api.AccessToken(api_key=api_key, api_secret=api_secret) \
         .with_identity(identity) \
         .with_name(name) \
         .with_grants(api.VideoGrants(
@@ -48,14 +55,20 @@ def generate_participant_token(identity: str, name: str, room: str = None) -> st
     """
     room = room or os.getenv("ROOM_NAME", "salon-support")
     
-    # Create access token with basic grants
-    token = api.AccessToken() \
+    # Get API credentials from environment
+    api_key = os.getenv("LIVEKIT_API_KEY")
+    api_secret = os.getenv("LIVEKIT_API_SECRET")
+    
+    if not api_key or not api_secret:
+        raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET environment variables are required")
+    
+    # Create access token with API credentials
+    token = api.AccessToken(api_key=api_key, api_secret=api_secret) \
         .with_identity(identity) \
         .with_name(name) \
         .with_grants(api.VideoGrants(
             room_join=True,
             room=room,
-            can_publish=True,
             can_subscribe=True
         ))
     

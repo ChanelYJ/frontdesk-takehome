@@ -220,6 +220,11 @@ class SalonAgent:
     def _send_message(self, message: str, participant: rtc.RemoteParticipant):
         """Send a message to a specific participant"""
         try:
+            # Check if we're connected and have a local participant
+            if not hasattr(self.room, 'local_participant') or self.room.local_participant is None:
+                logging.warning("Cannot send message: not connected to room")
+                return
+                
             data = message.encode('utf-8')
             self.room.local_participant.publish_data(data, topic="chat")
             logging.info(f"Sent message to {participant.identity}: {message}")
@@ -229,10 +234,24 @@ class SalonAgent:
     async def connect(self, url: str, token: str):
         """Connect to LiveKit room"""
         try:
+            logging.info(f"Attempting to connect to LiveKit room...")
+            logging.info(f"URL: {url}")
+            logging.info(f"Token length: {len(token)} characters")
+            
             await self.room.connect(url, token)
-            logging.info(f"Connected to room: {self.room.name}")
+            
+            # Wait a moment for connection to stabilize
+            await asyncio.sleep(1)
+            
+            if hasattr(self.room, 'local_participant') and self.room.local_participant:
+                logging.info(f"Successfully connected to room: {self.room.name}")
+                logging.info(f"Local participant identity: {self.room.local_participant.identity}")
+            else:
+                logging.warning("Connected but local participant not available yet")
+                
         except Exception as e:
             logging.error(f"Failed to connect: {e}")
+            logging.error(f"Connection details - URL: {url}, Token valid: {bool(token)}")
             raise
     
     async def disconnect(self):

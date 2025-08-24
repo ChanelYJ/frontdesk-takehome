@@ -42,10 +42,16 @@ class SalonAgentApp:
             token = generate_agent_token()
             
             logger.info(f"Connecting to LiveKit at: {url}")
-            logger.info(f"Agent identity: {self.agent.room.local_participant.identity}")
             
             # Connect to LiveKit
             await self.agent.connect(url, token)
+            
+            # Verify connection and local participant availability
+            if not hasattr(self.agent.room, 'local_participant') or self.agent.room.local_participant is None:
+                raise RuntimeError("Failed to establish local participant after connection")
+            
+            # Now we can safely access local participant info
+            logger.info(f"Agent identity: {self.agent.room.local_participant.identity}")
             
             self.running = True
             logger.info("Salon AI Agent is now running and ready to receive calls!")
