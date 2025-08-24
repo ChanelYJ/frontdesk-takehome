@@ -113,7 +113,42 @@ async def run_demo():
         print(f"Status Breakdown: {stats.get('status_counts', {})}")
         print(f"Priority Breakdown: {stats.get('priority_counts', {})}")
         print(f"Avg Response Time: {stats.get('avg_response_time_minutes', 0)} minutes")
+        print(f"Timeout Count: {stats.get('timeout_count', 0)}")
+        print(f"Avg Escalation Level: {stats.get('avg_escalation_level', 0)}")
         print()
+    
+    # Show lifecycle demonstration
+    print("🔄 Request Lifecycle Demonstration:")
+    print("-" * 40)
+    
+    # Import timeout handler for demo
+    from timeout_handler import timeout_handler
+    
+    # Show lifecycle stats
+    lifecycle_stats = timeout_handler.get_lifecycle_stats()
+    print(f"Pending Requests: {lifecycle_stats.get('pending_requests', 0)}")
+    print(f"Timeout Requests: {lifecycle_stats.get('timeout_requests', 0)}")
+    print(f"Unresolved Requests: {lifecycle_stats.get('unresolved_requests', 0)}")
+    print(f"Resolved Requests: {lifecycle_stats.get('resolved_requests', 0)}")
+    print(f"Escalation Success Rate: {lifecycle_stats.get('escalation_success_rate', 0)}%")
+    print()
+    
+    # Demonstrate timeout processing
+    print("⏰ Processing Timeouts and Escalations...")
+    try:
+        timeout_actions = await timeout_handler.process_timeouts()
+        if timeout_actions:
+            print(f"   🔄 {len(timeout_actions)} timeout actions processed:")
+            for action in timeout_actions:
+                if action['action'] == 'escalated':
+                    print(f"      📤 Request #{action['request_id']} escalated to {action['supervisor']} (Level {action['level']})")
+                elif action['action'] == 'unresolved':
+                    print(f"      ❌ Request #{action['request_id']} marked as unresolved: {action['reason']}")
+        else:
+            print("   ✅ No timeout actions needed")
+    except Exception as e:
+        print(f"   ❌ Error processing timeouts: {e}")
+    print()
     
     # Show supervisor information
     supervisors = supervisor_notifier.get_all_supervisors()
@@ -161,6 +196,18 @@ async def run_demo():
     print("  • Priority-based request handling")
     print("  • Tag-based categorization")
     print("  • Structured business information handling")
+    print("  • Request lifecycle management")
+    print("  • Timeout handling and escalations")
+    print("\n🔄 Request Lifecycle System:")
+    print("  • PENDING → TIMEOUT → UNRESOLVED")
+    print("  • Automatic escalation to backup supervisors")
+    print("  • Priority-based timeout thresholds")
+    print("  • Escalation success rate tracking")
+    print("\n⏰ Timeout Thresholds:")
+    print("  • URGENT: 5 minutes (3 escalation levels)")
+    print("  • HIGH: 10 minutes (3 escalation levels)")
+    print("  • MEDIUM: 15 minutes (2 escalation levels)")
+    print("  • LOW: 30 minutes (2 escalation levels)")
     print("\nTo run with LiveKit:")
     print("  1. Set up your .env file with LiveKit credentials")
     print("  2. Run: python src/main.py")

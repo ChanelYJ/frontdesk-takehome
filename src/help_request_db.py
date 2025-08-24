@@ -17,11 +17,12 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 class HelpRequestStatus(Enum):
-    """Status of help requests"""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    RESOLVED = "resolved"
-    ESCALATED = "escalated"
+    """Status of help requests with full lifecycle support"""
+    PENDING = "pending"           # Initial state, waiting for supervisor
+    IN_PROGRESS = "in_progress"   # Supervisor actively working on it
+    TIMEOUT = "timeout"           # Escalating to backup supervisor
+    RESOLVED = "resolved"         # Successfully completed
+    UNRESOLVED = "unresolved"     # Failed to resolve after all escalations
 
 class HelpRequestPriority(Enum):
     """Priority levels for help requests"""
@@ -73,9 +74,15 @@ class HelpRequestDB:
                         assigned_to TEXT,
                         resolution TEXT,
                         tags TEXT,
-                        metadata TEXT
+                        metadata TEXT,
+                        timeout_at TIMESTAMP,
+                        escalation_level INTEGER DEFAULT 0,
+                        escalation_history TEXT
                     )
                 """)
+                
+                # Check if new columns exist and add them if they don't
+                self._migrate_schema(cursor)
                 
                 # Create indexes for better performance
                 cursor.execute("""
@@ -95,40 +102,78 @@ class HelpRequestDB:
             logger.error(f"Failed to initialize database: {e}")
             raise
     
+    def _get_connection(self):
+        """Get a database connection for external use"""
+        return sqlite3.connect(self.db_path)
+    
+    def _migrate_schema(self, cursor):
+        """Migrate existing database schema to add new columns"""
+        try:
+            # Check if timeout_at column exists
+            cursor.execute("PRAGMA table_info(help_requests)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # Add timeout_at column if it doesn't exist
+            if 'timeout_at' not in columns:
+                cursor.execute("ALTER TABLE help_requests ADD COLUMN timeout_at TIMESTAMP")
+                logger.info("Added timeout_at column")
+            
+            # Add escalation_level column if it doesn't exist
+            if 'escalation_level' not in columns:
+                cursor.execute("ALTER TABLE help_requests ADD COLUMN escalation_level INTEGER DEFAULT 0")
+                logger.info("Added escalation_level column")
+            
+            # Add escalation_history column if it doesn't exist
+            if 'escalation_history' not in columns:
+                cursor.execute("ALTER TABLE help_requests ADD COLUMN escalation_history TEXT DEFAULT '[]'")
+                logger.info("Added escalation_history column")
+                
+        except Exception as e:
+            logger.error(f"Schema migration failed: {e}")
+            # Continue anyway - the table will work with existing columns
+    
     def create_help_request(self, 
                           customer_id: str, 
                           customer_name: str, 
-                          question: str,
-                          priority: HelpRequestPriority = HelpRequestPriority.MEDIUM,
+                          question: str, 
+                          priority: HelpRequestPriority,
                           tags: Optional[List[str]] = None,
                           metadata: Optional[Dict[str, Any]] = None) -> HelpRequest:
         """Create a new help request"""
         try:
-            now = datetime.utcnow()
-            
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
+                now = datetime.now()
+                
+                # Calculate timeout based on priority
+                timeout_minutes = self._calculate_timeout_minutes(priority)
+                timeout_at = now.replace(second=0, microsecond=0)
+                timeout_at = timeout_at.replace(minute=timeout_at.minute + timeout_minutes)
+                
+                # Insert the new request
                 cursor.execute("""
-                    INSERT INTO help_requests 
-                    (customer_id, customer_name, question, status, priority, created_at, updated_at, tags, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO help_requests (
+                        customer_id, customer_name, question, status, priority,
+                        created_at, updated_at, tags, metadata, timeout_at,
+                        escalation_level, escalation_history
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    customer_id,
-                    customer_name,
-                    question,
-                    HelpRequestStatus.PENDING.value,
-                    priority.value,
-                    now,
-                    now,
-                    json.dumps(tags) if tags else None,
-                    json.dumps(metadata) if metadata else None
+                    customer_id, customer_name, question, 
+                    HelpRequestStatus.PENDING.value, priority.value,
+                    now, now, 
+                    json.dumps(tags or []), 
+                    json.dumps(metadata or {}),
+                    timeout_at,
+                    0,  # Initial escalation level
+                    "[]"  # Empty escalation history
                 ))
                 
                 request_id = cursor.lastrowid
                 conn.commit()
                 
-                help_request = HelpRequest(
+                # Create and return the HelpRequest object
+                return HelpRequest(
                     id=request_id,
                     customer_id=customer_id,
                     customer_name=customer_name,
@@ -137,12 +182,11 @@ class HelpRequestDB:
                     priority=priority,
                     created_at=now,
                     updated_at=now,
-                    tags=tags,
-                    metadata=metadata
+                    tags=tags or [],
+                    metadata=metadata or {},
+                    assigned_to=None,
+                    resolution=None
                 )
-                
-                logger.info(f"Created help request {request_id} for customer {customer_id}")
-                return help_request
                 
         except Exception as e:
             logger.error(f"Failed to create help request: {e}")
@@ -234,48 +278,152 @@ class HelpRequestDB:
             return []
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get statistics about help requests"""
+        """Get comprehensive statistics about help requests"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
                 # Total requests
                 cursor.execute("SELECT COUNT(*) FROM help_requests")
-                total = cursor.fetchone()[0]
+                total_requests = cursor.fetchone()[0]
                 
-                # Requests by status
+                # Status breakdown
                 cursor.execute("""
-                    SELECT status, COUNT(*) FROM help_requests 
+                    SELECT status, COUNT(*) 
+                    FROM help_requests 
                     GROUP BY status
                 """)
                 status_counts = dict(cursor.fetchall())
                 
-                # Requests by priority
+                # Priority breakdown
                 cursor.execute("""
-                    SELECT priority, COUNT(*) FROM help_requests 
+                    SELECT priority, COUNT(*) 
+                    FROM help_requests 
                     GROUP BY priority
                 """)
                 priority_counts = dict(cursor.fetchall())
                 
-                # Average response time (for resolved requests)
+                # Average response time (time from creation to resolution)
                 cursor.execute("""
-                    SELECT AVG(JULIANDAY(updated_at) - JULIANDAY(created_at)) * 24 * 60
+                    SELECT AVG(
+                        (julianday(updated_at) - julianday(created_at)) * 24 * 60
+                    ) 
                     FROM help_requests 
-                    WHERE status = ? AND assigned_to IS NOT NULL
-                """, (HelpRequestStatus.RESOLVED.value,))
-                
+                    WHERE status = 'resolved'
+                """)
                 avg_response_time = cursor.fetchone()[0] or 0
                 
+                # Timeout statistics
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM help_requests 
+                    WHERE status IN ('timeout', 'unresolved')
+                """)
+                timeout_count = cursor.fetchone()[0]
+                
+                # Escalation statistics
+                cursor.execute("""
+                    SELECT AVG(escalation_level) 
+                    FROM help_requests 
+                    WHERE escalation_level > 0
+                """)
+                avg_escalation_level = cursor.fetchone()[0] or 0
+                
                 return {
-                    "total_requests": total,
-                    "status_counts": status_counts,
-                    "priority_counts": priority_counts,
-                    "avg_response_time_minutes": round(avg_response_time, 2)
+                    'total_requests': total_requests,
+                    'status_counts': status_counts,
+                    'priority_counts': priority_counts,
+                    'avg_response_time_minutes': round(avg_response_time, 1),
+                    'timeout_count': timeout_count,
+                    'avg_escalation_level': round(avg_escalation_level, 1)
                 }
                 
         except Exception as e:
             logger.error(f"Failed to get statistics: {e}")
             return {}
+    
+    def check_timeouts(self) -> List[HelpRequest]:
+        """Check for requests that have timed out and need escalation"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Find requests that are pending and past their timeout
+                cursor.execute("""
+                    SELECT * FROM help_requests 
+                    WHERE status = 'pending' 
+                    AND timeout_at IS NOT NULL 
+                    AND timeout_at < datetime('now')
+                """)
+                
+                rows = cursor.fetchall()
+                return [self._row_to_help_request(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Failed to check timeouts: {e}")
+            return []
+    
+    def escalate_request(self, request_id: int, escalation_level: int, 
+                        assigned_to: str, reason: str) -> bool:
+        """Escalate a request to the next level"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get current escalation history
+                cursor.execute("""
+                    SELECT escalation_history FROM help_requests WHERE id = ?
+                """, (request_id,))
+                current_history = cursor.fetchone()[0] or "[]"
+                
+                # Parse and update history
+                history = json.loads(current_history)
+                history.append({
+                    'timestamp': datetime.now().isoformat(),
+                    'level': escalation_level,
+                    'assigned_to': assigned_to,
+                    'reason': reason
+                })
+                
+                # Update the request
+                cursor.execute("""
+                    UPDATE help_requests 
+                    SET status = ?, 
+                        escalation_level = ?, 
+                        assigned_to = ?,
+                        escalation_history = ?,
+                        updated_at = datetime('now')
+                    WHERE id = ?
+                """, ('timeout', escalation_level, assigned_to, 
+                      json.dumps(history), request_id))
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to escalate request {request_id}: {e}")
+            return False
+    
+    def mark_unresolved(self, request_id: int, reason: str) -> bool:
+        """Mark a request as unresolved after all escalation attempts"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE help_requests 
+                    SET status = ?, 
+                        resolution = ?,
+                        updated_at = datetime('now')
+                    WHERE id = ?
+                """, ('unresolved', f"Unresolved: {reason}", request_id))
+                
+                conn.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to mark request {request_id} as unresolved: {e}")
+            return False
     
     def _row_to_help_request(self, row: tuple) -> HelpRequest:
         """Convert database row to HelpRequest object"""
@@ -299,6 +447,16 @@ class HelpRequestDB:
         # SQLite connections are automatically closed, but this method
         # can be used for cleanup if needed
         pass
+
+    def _calculate_timeout_minutes(self, priority: HelpRequestPriority) -> int:
+        """Calculate timeout minutes based on priority"""
+        timeout_map = {
+            HelpRequestPriority.URGENT: 5,    # 5 minutes for urgent
+            HelpRequestPriority.HIGH: 10,     # 10 minutes for high
+            HelpRequestPriority.MEDIUM: 15,   # 15 minutes for medium
+            HelpRequestPriority.LOW: 30       # 30 minutes for low
+        }
+        return timeout_map.get(priority, 15)  # Default to 15 minutes
 
 # Global database instance
 help_request_db = HelpRequestDB() 
