@@ -66,17 +66,25 @@ async def run_demo():
         
         # Process the question and get response
         if i == 1:  # First question is a greeting
-            welcome_message = f"Welcome to {agent.salon_info['business_name']}! I'm your AI assistant. How can I help you today?"
+            welcome_message = f"Welcome to {agent.business_logic.get_business_name()}! I'm your AI assistant. How can I help you today?"
             print(f"   Agent: {welcome_message}")
         else:
             # Get the response without sending it
-            response = agent._generate_response(question.lower())
+            response = agent.business_logic.generate_response(question.lower())
             if response:
                 print(f"   Agent: {response}")
             else:
                 print(f"   Agent: Let me check with my supervisor and get back to you.")
-                # Trigger help request for demo purposes
-                await agent._trigger_help_request(question, mock_participant)
+                # For demo purposes, create help request directly through the service
+                # instead of trying to use LiveKit methods
+                try:
+                    help_request = await agent.help_request_service.create_help_request(question, mock_participant)
+                    if help_request:
+                        print(f"   📝 Help request created: #{help_request.id}")
+                    else:
+                        print(f"   ❌ Failed to create help request")
+                except Exception as e:
+                    print(f"   ❌ Error creating help request: {e}")
         
         # Small delay for readability
         await asyncio.sleep(0.3)
@@ -122,7 +130,7 @@ async def run_demo():
     # Show salon business information
     print("🏪 Salon Business Information:")
     print("-" * 35)
-    salon_info = agent.salon_info
+    salon_info = agent.business_logic.get_business_info()
     
     print(f"Business: {salon_info['business_name']}")
     print(f"Address: {salon_info['address']}")
